@@ -78,6 +78,7 @@ cols_ipea_final = ["cod_municipio"] + [c + "_mm3" for c in taxas]
 df_ipea_last = df_ipea_last[cols_ipea_final].drop_duplicates("cod_municipio")
 
 
+
 # ============================================================
 # EDA DO IPEA — IDENTIFICAR OS 10 MUNICÍPIOS MAIS VIOLENTOS
 # ============================================================
@@ -106,6 +107,7 @@ df_ipea_last["uf"] = (
     .map(mapa_uf)
 )
 
+
 # 3. Se você NÃO tem nome do município em df_ipea_last, remova "nome_municipio" da seleção.
 #   Se tiver, mantenha. Aqui vou supor que NÃO tem, para evitar erro.
 
@@ -121,6 +123,7 @@ print(
          "tx_homic_homens_mm3", "tx_armas_fogo_mm3", "violencia_media"]
     ]
 )
+
 
 # 4. Gráfico: Top 10 municípios mais violentos
 plt.figure(figsize=(10,6))
@@ -268,7 +271,8 @@ def carregar_tratar_enem_2022(caminho_arquivo):
         "NO_MUNICIPIO_PROVA",
         "CO_UF_PROVA",
         "SG_UF_PROVA",
-        "NU_NOTA_CN", "NU_NOTA_CH", "NU_NOTA_LC", "NU_NOTA_MT", "NU_NOTA_REDACAO"
+        "NU_NOTA_CN", "NU_NOTA_CH", "NU_NOTA_LC", "NU_NOTA_MT", "NU_NOTA_REDACAO",
+        "Q006"
     ]
 
     df = pd.read_csv(
@@ -281,8 +285,42 @@ def carregar_tratar_enem_2022(caminho_arquivo):
 
     df = df[df["NU_ANO"] == 2022]
 
-    # MANTER TODAS AS ESCOLAS EXCETO PRIVADAS
-    df = df[df["TP_ESCOLA"] != 3]
+    # # MANTER TODAS AS ESCOLAS EXCETO PRIVADAS
+    # df = df[df["TP_ESCOLA"] != 3]
+
+    # MANTER APENAS AS ESCOLAS PUBLICAS
+    df = df[df["TP_ESCOLA"] == 2]
+    
+    # MANTER APENAS ESCOLAS PÚBLICAS
+    # E INCLUIR "1 - Não respondeu" SE Q006 INDICAR RENDA A–E
+
+    # Filtrar apenas registros válidos de TP_ESCOLA
+    df = df[df["TP_ESCOLA"].isin([1, 2])]  # 1 = Não respondeu, 2 = Pública
+
+    # Carregar Q006 (renda familiar)
+    # Observação: Q006 precisa estar presente no arquivo original
+    df_q006 = pd.read_csv(
+    caminho_arquivo,
+    sep=";",
+    encoding="latin1",
+    usecols=["Q006"],
+    low_memory=False
+    )
+
+    # Adicionar Q006 ao dataframe principal
+    df["Q006"] = df_q006["Q006"]
+
+    # Criar filtro de renda baixa (A–E)
+    renda_baixa = ["A", "B", "C", "D", "E"]
+
+    # Aplicar regra metodológica:
+        # - Manter TP_ESCOLA = 2 (pública)
+        # - Manter TP_ESCOLA = 1 (não respondeu) somente se renda for baixa
+    df = df[
+        (df["TP_ESCOLA"] == 2) |
+        ((df["TP_ESCOLA"] == 1) & (df["Q006"].isin(renda_baixa)))
+    ]
+
 
     # CALCULAR PERFORMANCE
     df["performance"] = df[
@@ -384,12 +422,16 @@ plt.title("Boxplot da Performance — ENEM 2022")
 plt.ylabel("Performance")
 plt.show()
 
+
 # -------------------------
-# Correlação entre notas
+# Correlação entre notas (sem performance)
 # -------------------------
+
+notas_sem_perf = [col for col in notas if col != "performance"]
+
 plt.figure(figsize=(8,6))
-sns.heatmap(df_enem_raw[notas].corr(), annot=True, cmap="coolwarm")
-plt.title("Correlação entre Notas do ENEM 2022")
+sns.heatmap(df_enem_raw[notas_sem_perf].corr(), annot=True, cmap="coolwarm")
+plt.title("Correlação entre Notas do ENEM 2022 (sem performance)")
 plt.show()
 
 # -------------------------
@@ -417,3 +459,33 @@ plt.figure(figsize=(6,4))
 sns.boxplot(y=df_enem_raw["performance"])
 plt.title("Outliers da Performance — ENEM 2022")
 plt.show()
+
+
+# ============================================================
+# VALIDAÇÃO DE ATRIBUIÇÃO TERRITORIAL
+# ============================================================
+print("\n===== Calculando a Taxa de Convergência Territorial =====")
+
+# Carregando apenas as duas colunas originais do arquivo bruto para não pesar a memória
+df_validacao_territorial = pd.read_csv(
+    enem_2022_path,
+    sep=";",
+    encoding="latin1",
+    usecols=["CO_MUNICIPIO_ESC", "CO_MUNICIPIO_PROVA"],
+    low_memory=False
+)
+
+# Filtrar apenas os alunos que efetivamente informaram a escola (tirar os nulos)
+df_base_completa = df_validacao_territorial.dropna(subset=["CO_MUNICIPIO_ESC"])
+
+# Calcular quantos fizeram a prova no mesmo local da escola
+total_registros_com_escola = len(df_base_completa)
+fizeram_no_mesmo_municipio = (df_base_completa["CO_MUNICIPIO_ESC"] == df_base_completa["CO_MUNICIPIO_PROVA"]).sum()
+
+# Calcular a porcentagem
+taxa_sobreposicao = (fizeram_no_mesmo_municipio / total_registros_com_escola) * 100
+
+print(f"Total de candidatos que informaram o município da escola: {total_registros_com_escola}")
+print(f"Quantos fizeram a prova no mesmo município: {fizeram_no_mesmo_municipio}")
+print(f"Taxa de convergência territorial: {taxa_sobreposicao:.2f}%")
+
